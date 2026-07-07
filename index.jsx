@@ -57,7 +57,7 @@ export default function App() {
     suggestedTime: '',
     suggestedEra: 'AD'
   });
-
+  
   const scrollRef = useRef(null); 
 
   // 5. AUTHENTICATION LOGIC (RULE 3)
@@ -91,36 +91,86 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // 6. FIRESTORE SYNC (RULE 1 & 2)
+ // 5. POCKETBASE AUTHENTICATION LOGIC (RULE 3)
   useEffect(() => {
-    if (!user) return; 
-
-    // Sync Nodes
-    const nodesCollection = collection(db, 'artifacts', appId, 'public', 'data', 'nodes');
-    const unsubNodes = onSnapshot(nodesCollection, 
-      (snapshot) => {
-        const cloudNodes = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        setNodes(cloudNodes);
-      }, 
-      (err) => console.error("Nodes Sync Error:", err)
-    );
-
-    // Sync Doubts
-    const doubtsCollection = collection(db, 'artifacts', appId, 'public', 'data', 'doubts');
-    const unsubDoubts = onSnapshot(doubtsCollection, 
-      (snapshot) => {
-        const cloudDoubts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        setDoubts(cloudDoubts);
-      }, 
-      (err) => console.error("Doubts Sync Error:", err)
-    );
-
-    return () => {
-      unsubNodes();
-      unsubDoubts();
+    const initAuth = async () => {
+      try {
+        // If there's an environment auth token passed in, validate or sign in with it
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await pb.collection('users').authWithPassword('admin_email', 'admin_password'); // Or use token auth if applicable
+        } else if (!pb.authStore.isValid) {
+          // PocketBase handles guests transparently, but if you need an explicit guest/auth session:
+          // For now, if there's no valid local storage session, we treat them as Guest (null auth model)
+          setUser(null);
+        }
+      } catch (err) {
+        console.error("Authentication Error:", err);
+      } finally {
+        setAuthLoading(false);
+      }
     };
-  }, [user]);
 
+    initAuth();
+
+    // Listen for real-time auth state updates (Sign in / Sign out)
+    const removeAuthListener = pb.authStore.onChange((token, model) => {
+      setUser(model);
+      // If the logged-in user model is an Admin/has specific flags, set admin status
+      if (model && (model.isAdmin || model.role === 'admin')) {
+        setIsAdmin(true);
+      } else {
+        setIsAdmin(false);
+      }
+    });
+
+    return () => removeAuthListener();
+  }, []);
+
+  // 6. POCKETBASE REAL-TIME SUBSCRIPTION SYNC (RULE 1 & 2)
+  useEffect(() => {
+    // 1. Fetch initial records list for 'nodes' and 'doubts'
+    const fetchInitialData = async () => {
+      try {
+        const initialNodes = await pb.collection('nodes').getFullList({ sort: '-created' });
+        setNodes(initialNodes);
+
+        const initialDoubts = await pb.collection('doubts').getFullList({ sort: '-created' });
+        setDoubts(initialDoubts);
+      } catch (err) {
+        console.error("Initial data load error:", err);
+      }
+    };
+
+    fetchInitialData();
+
+    // 2. Subscribe to real-time changes for 'nodes'
+    pb.collection('nodes').subscribe('*', (e) => {
+      if (e.action === 'create') {
+        setNodes((prev) => [e.record, ...prev]);
+      } else if (e.action === 'update') {
+        setNodes((prev) => prev.map((item) => (item.id === e.record.id ? e.record : item)));
+      } else if (e.action === 'delete') {
+        setNodes((prev) => prev.filter((item) => item.id !== e.record.id));
+      }
+    }).catch(err => console.error("Nodes subscription failed:", err));
+
+    // 3. Subscribe to real-time changes for 'doubts'
+    pb.collection('doubts').subscribe('*', (e) => {
+      if (e.action === 'create') {
+        setDoubts((prev) => [e.record, ...prev]);
+      } else if (e.action === 'update') {
+        setDoubts((prev) => prev.map((item) => (item.id === e.record.id ? e.record : item)));
+      } else if (e.action === 'delete') {
+        setDoubts((prev) => prev.filter((item) => item.id !== e.record.id));
+      }
+    }).catch(err => console.error("Doubts subscription failed:", err));
+
+    // Clean up all subscriptions when component unmounts
+    return () => {
+      pb.collection('nodes').unsubscribe('*');
+      pb.collection('doubts').unsubscribe('*');
+    };
+  }, []); // Runs once on mount to establish permanent subscriptions
   // 7. AUTO-CENTER LOGIC
   useEffect(() => {
     if (view === 'graph' && scrollRef.current) {
