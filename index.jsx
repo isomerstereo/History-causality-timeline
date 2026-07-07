@@ -1,33 +1,11 @@
 import { useState, useEffect, useRef } from 'react'
-// 1. ADD FIREBASE IMPORTS
-import { initializeApp } from 'firebase/app';
-import { 
-  getAuth, 
-  onAuthStateChanged, 
-  signInAnonymously, 
-  signInWithCustomToken,
-  signOut 
-} from 'firebase/auth';
-import { 
-  getFirestore, 
-  collection, 
-  doc, 
-  setDoc, 
-  getDoc, 
-  addDoc, 
-  updateDoc, 
-  deleteDoc,
-  onSnapshot, 
-  query 
-} from 'firebase/firestore';
+import PocketBase from 'pocketbase';
 
-// Global variables provided by the environment
-const firebaseConfig = JSON.parse(__firebase_config);
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
+// Initialize the single-file real-time database connection
+const pb = new PocketBase('http://127.0.0.1:8090'); 
+
+// (Optional) Keep your appId if you still use it to scope UI elements locally
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'history-timeline-app';
-
 export default function App() {
   // 1. CONSTANTS & CONFIG
   const ZONES = {
